@@ -1,228 +1,316 @@
-import { Link, Navigate, useParams } from "react-router-dom";
-import { getAccountDetailView } from "../../data/mockAccounts";
-import type { RowRole, RowStatus } from "../../data/mockAccounts";
+import axios from 'axios'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Link, Navigate, useParams } from 'react-router-dom'
+import { toast } from 'sonner'
+import api from '../../api/axios'
+import type { AdminUserDetailDto, PortalProfileResponse } from '../../types/portal'
+import { getApiErrorMessage } from '../../utils/apiMessage'
+import { normalizeAdminUserDetailPayload } from '../../utils/adminUserDetail'
+import { displayRole, displayStatus, formatDate } from '../../utils/format'
+import { resolveApiMediaUrl } from '../../utils/mediaUrl'
+import { useAppSelector } from '../../store/hooks'
 
-function rolePillDetail(role: RowRole) {
-  if (role === "User") return "bg-stone-200 text-stone-700";
-  if (role === "Staff") return "bg-violet-100 text-violet-800";
-  return "bg-orange-100 text-orange-800";
+const shell = 'min-h-0 flex-1 overflow-auto bg-gradient-to-b from-[#fdfbf7] via-[#faf6ef] to-[#f5f0e8]'
+
+function displayInitials(fullName: string | null | undefined, email: string) {
+  const n = fullName?.trim()
+  if (n) {
+    const parts = n.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
+    return n[0]!.toUpperCase()
+  }
+  const ch = email.trim()[0]
+  return ch ? ch.toUpperCase() : '?'
 }
 
-function statusPill(status: RowStatus) {
-  return status === "Active"
-    ? "bg-emerald-100 text-emerald-700"
-    : "bg-red-100 text-red-700";
+function rolePill(role: string) {
+  const r = role?.toLowerCase()
+  if (r === 'traveler') return 'bg-sky-50 text-sky-800 ring-1 ring-sky-200/80'
+  if (r === 'staff') return 'bg-violet-50 text-violet-800 ring-1 ring-violet-200/80'
+  return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
 }
 
-function Stars({ count }: { count: number }) {
+function statusPill(status: string) {
+  return status?.toLowerCase() === 'active'
+    ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80'
+    : 'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80'
+}
+
+function yesNo(v: boolean | null | undefined) {
+  if (v == null) return '—'
+  return v ? 'Có' : 'Chưa'
+}
+
+function InfoTile({
+  label,
+  children,
+  accent = 'amber',
+}: {
+  label: string
+  children: ReactNode
+  accent?: 'amber' | 'stone' | 'sky'
+}) {
+  const bar =
+    accent === 'sky'
+      ? 'bg-sky-400'
+      : accent === 'stone'
+        ? 'bg-stone-400'
+        : 'bg-[#c5a070]'
   return (
-    <div className="flex gap-0.5 text-amber-400" aria-label={`${count} of 5 stars`}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <svg key={i} className="w-4 h-4" viewBox="0 0 24 24" fill={i <= count ? "currentColor" : "none"} stroke="currentColor">
-          <path
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M12 3l2.08 6.42H21l-5.42 3.94 2.08 6.42L12 15.84 6.34 19.78l2.08-6.42L3 9.42h6.92L12 3z"
-          />
-        </svg>
-      ))}
+    <div className="group relative overflow-hidden rounded-2xl border border-stone-200/70 bg-white/90 p-4 shadow-[0_2px_10px_rgba(0,0,0,0.04)] transition-shadow hover:shadow-[0_6px_24px_rgba(0,0,0,0.06)]">
+      <div className={`absolute left-0 top-0 h-full w-1 ${bar} opacity-90`} aria-hidden />
+      <p className="pl-2 text-[11px] font-semibold uppercase tracking-wide text-stone-500">{label}</p>
+      <div className="mt-1.5 pl-2 text-sm font-medium text-stone-900">{children}</div>
     </div>
-  );
+  )
 }
 
 export default function UserAccountDetailPage() {
-  const { userId } = useParams<{ userId: string }>();
-  if (!userId) return <Navigate to="/admin/accounts" replace />;
+  const { userId } = useParams<{ userId: string }>()
+  const authUserId = useAppSelector((s) => s.auth.userId)
+  const [account, setAccount] = useState<AdminUserDetailDto | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [avatarBroken, setAvatarBroken] = useState(false)
 
-  const account = getAccountDetailView(userId);
-  if (!account) return <Navigate to="/admin/accounts" replace />;
+  const load = useCallback(async () => {
+    if (!userId) return
+    setLoading(true)
+    setError(null)
+    try {
+      const { data: raw } = await api.get<unknown>(`/api/admin/users/${userId}`)
+      let next = normalizeAdminUserDetailPayload(raw)
 
-  return (
-    <div className="min-h-screen bg-[#fff9f0] font-['Lato',system-ui,sans-serif] text-stone-800">
-      <header className="sticky top-0 z-10 flex items-center justify-between px-4 sm:px-8 py-3.5 bg-white/95 backdrop-blur border-b border-stone-200/80">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            to="/admin/accounts"
-            className="p-2 -ml-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-800 shrink-0"
-            aria-label="Quay lại danh sách"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="w-8 h-8 rounded-lg bg-amber-400 flex items-center justify-center">
-                <svg viewBox="0 0 24 24" className="w-4 h-4 text-white fill-current">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-                </svg>
-              </div>
-              <span className="text-sm font-semibold text-stone-700 hidden sm:inline">Journey Sense</span>
-            </div>
-            <span className="hidden sm:inline h-5 w-px bg-stone-200 shrink-0" aria-hidden />
-            <h1 className="text-sm sm:text-base font-semibold text-stone-900 truncate">User Account Detail</h1>
-          </div>
+      if (authUserId && userId.toLowerCase() === authUserId.toLowerCase()) {
+        try {
+          const { data: prof } = await api.get<PortalProfileResponse>('/api/profile')
+          next = {
+            ...next,
+            fullName: prof.fullName?.trim() || next.fullName,
+            avatarUrl: prof.avatarUrl?.trim() || next.avatarUrl,
+            bio: prof.bio?.trim() || next.bio,
+          }
+        } catch {
+          /* chỉ dùng admin user */
+        }
+      }
+
+      setAccount(next)
+    } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 404) {
+        setAccount(null)
+      } else {
+        const msg = getApiErrorMessage(e)
+        setError(msg)
+        toast.error(msg)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [userId, authUserId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    setAvatarBroken(false)
+  }, [account?.id, account?.avatarUrl])
+
+  if (!userId) return <Navigate to="/admin/accounts" replace />
+
+  const patchStatus = async (status: 'active' | 'suspended') => {
+    if (!userId) return
+    setBusy(true)
+    try {
+      await api.patch(`/api/admin/users/${userId}/status`, {
+        status,
+        reason: status === 'suspended' ? 'Cập nhật từ portal admin' : undefined,
+      })
+      toast.success(status === 'suspended' ? 'Đã đình chỉ tài khoản' : 'Đã kích hoạt lại tài khoản')
+      await load()
+    } catch (e) {
+      toast.error(getApiErrorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className={shell}>
+        <div className="mx-auto flex max-w-3xl flex-col items-center justify-center px-4 py-24 sm:px-8">
+          <div className="h-12 w-12 animate-pulse rounded-full bg-stone-200/80" />
+          <p className="mt-6 text-sm text-stone-500">Đang tải hồ sơ…</p>
         </div>
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-200 to-amber-400 ring-2 ring-white shadow-sm shrink-0" />
-      </header>
+      </main>
+    )
+  }
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 lg:py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-5 space-y-5">
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-6 text-center">
-              <img
-                src={account.profileImageUrl}
-                alt=""
-                className="w-28 h-28 mx-auto rounded-full object-cover ring-4 ring-stone-100 shadow-md"
-              />
-              <h2 className="mt-4 text-xl font-bold text-stone-900 font-['Cormorant_Garamond',serif]">{account.name}</h2>
-              <p className="mt-1 text-sm text-stone-500">{account.email}</p>
-              <p className="text-sm text-stone-500">{account.phone}</p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${rolePillDetail(account.role)}`}>
-                  {account.role}
-                </span>
-                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${statusPill(account.status)}`}>
-                  {account.status}
-                </span>
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-3">Membership &amp; Points</h3>
-              <ul className="space-y-2 text-sm">
-                <li className="flex justify-between gap-3">
-                  <span className="text-stone-500">Current Plan</span>
-                  <span className="font-semibold text-stone-800 text-right">{account.membershipPlan}</span>
-                </li>
-                <li className="flex justify-between gap-3">
-                  <span className="text-stone-500">Points Wallet</span>
-                  <span className="font-semibold text-stone-800">{account.pointsWallet.toLocaleString()}</span>
-                </li>
-              </ul>
-            </section>
-
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-3">Travel Vibes</h3>
-              <div className="flex flex-wrap gap-2">
-                {account.travelVibes.map((tag) => (
-                  <span
-                    key={tag}
-                    className="px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-100/80"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-3">Account Actions</h3>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#8b7355] hover:bg-[#7a6549] text-white text-sm font-semibold py-3 px-4 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  Edit Account Information
-                </button>
-                <button
-                  type="button"
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-sm font-semibold py-3 px-4 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1721 9z" />
-                  </svg>
-                  Reset Password
-                </button>
-                <button
-                  type="button"
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold py-3 px-4 border border-red-100 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  Suspend Account
-                </button>
-              </div>
-            </section>
-          </div>
-
-          <div className="lg:col-span-7 space-y-5">
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-4">Journey Summary</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="rounded-xl bg-[#faf6ef] border border-stone-100 p-4 text-center">
-                  <p className="text-2xl font-bold text-stone-900">{account.journeyTotal}</p>
-                  <p className="text-xs text-stone-500 mt-1">Total Journeys</p>
-                </div>
-                <div className="rounded-xl bg-[#faf6ef] border border-stone-100 p-4 text-center">
-                  <p className="text-2xl font-bold text-stone-900">{account.avgRating}</p>
-                  <p className="text-xs text-stone-500 mt-1">Avg Rating</p>
-                </div>
-                <div className="rounded-xl bg-[#faf6ef] border border-stone-100 p-4 text-center">
-                  <p className="text-2xl font-bold text-stone-900 flex items-center justify-center gap-1">
-                    {account.pointsUsed.toLocaleString()}
-                    <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-8-8 16" />
-                    </svg>
-                  </p>
-                  <p className="text-xs text-stone-500 mt-1">Points Used</p>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-4">Recent Journeys</h3>
-              <ul className="divide-y divide-stone-100">
-                {account.recentJourneys.length === 0 ? (
-                  <li className="py-4 text-sm text-stone-500">Chưa có hành trình.</li>
-                ) : (
-                  account.recentJourneys.map((j) => (
-                    <li key={`${j.route}-${j.date}`} className="py-4 first:pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-stone-900">{j.route}</p>
-                        <p className="text-xs text-stone-500 mt-0.5">{j.date}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <Stars count={j.stars} />
-                        <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-700">{j.category}</span>
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ul>
-              <button
-                type="button"
-                className="mt-4 w-full sm:w-auto rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-stone-700 text-sm font-semibold py-2.5 px-4 transition-colors"
-              >
-                View All Journey History
-              </button>
-            </section>
-
-            <section className="rounded-2xl bg-white border border-stone-100 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-stone-900 mb-4">Account Information</h3>
-              <dl className="space-y-3 text-sm">
-                <div className="flex flex-col sm:flex-row sm:justify-between gap-1">
-                  <dt className="text-stone-500">Account Created</dt>
-                  <dd className="font-medium text-stone-900 sm:text-right">{account.accountCreatedLabel}</dd>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:justify-between gap-1">
-                  <dt className="text-stone-500">Last Login</dt>
-                  <dd className="font-medium text-stone-900 sm:text-right">{account.lastLoginLabel}</dd>
-                </div>
-                <div className="flex flex-col sm:flex-row sm:justify-between gap-1">
-                  <dt className="text-stone-500">Account ID</dt>
-                  <dd className="font-medium text-stone-900 sm:text-right font-mono text-xs sm:text-sm">{account.accountIdLabel}</dd>
-                </div>
-              </dl>
-            </section>
+  if (error || !account) {
+    return (
+      <main className={shell}>
+        <div className="mx-auto max-w-lg px-4 py-16 sm:px-8">
+          <div className="rounded-2xl border border-rose-100 bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+              <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.75}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-stone-800">{error ?? 'Không tìm thấy tài khoản.'}</p>
+            <Link
+              to="/admin/accounts"
+              className="mt-6 inline-flex items-center justify-center rounded-xl bg-[#c5a070] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#b08f5f]"
+            >
+              Quay lại danh sách
+            </Link>
           </div>
         </div>
       </main>
-    </div>
-  );
+    )
+  }
+
+  const displayName = account.fullName?.trim() || null
+  const avatarSrc = account.avatarUrl?.trim() ? resolveApiMediaUrl(account.avatarUrl) : ''
+  const showAvatar = Boolean(avatarSrc && !avatarBroken)
+
+  return (
+    <main className={shell}>
+      <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-8 lg:py-10">
+        <Link
+          to="/admin/accounts"
+          className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-[#9a7b4f] transition-colors hover:text-[#7d6540]"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/80 text-stone-600 shadow-sm ring-1 ring-stone-200/80">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </span>
+          Danh sách tài khoản
+        </Link>
+
+        <header className="relative mb-8 overflow-hidden rounded-3xl border border-stone-200/80 bg-white p-6 shadow-[0_8px_40px_rgba(0,0,0,0.06)] sm:p-8">
+          <div
+            className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-[#c5a070]/15 blur-2xl"
+            aria-hidden
+          />
+          <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:gap-8">
+            <div className="relative flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-[#c5a070] to-[#8f7349] text-2xl font-bold text-white shadow-lg shadow-amber-900/20 sm:h-28 sm:w-28">
+              {showAvatar ? (
+                <img
+                  src={avatarSrc}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onError={() => setAvatarBroken(true)}
+                />
+              ) : (
+                displayInitials(account.fullName, account.email)
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-['Cormorant_Garamond',serif] text-xs font-semibold uppercase tracking-widest text-[#9a7b4f]">
+                Hồ sơ người dùng
+              </p>
+              <h1 className="mt-1 break-words font-['Cormorant_Garamond',serif] text-2xl font-semibold text-stone-900 sm:text-3xl">
+                {displayName || account.email}
+              </h1>
+              {displayName && (
+                <p className="mt-1 break-all text-sm text-stone-600">{account.email}</p>
+              )}
+              <p className="mt-2 max-w-full truncate rounded-lg bg-stone-50 px-2 py-1 font-mono text-[11px] text-stone-500 ring-1 ring-stone-100 sm:inline-block">
+                {account.id}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className={`inline-flex rounded-full px-3.5 py-1 text-xs font-semibold ${rolePill(account.role)}`}>
+                  {displayRole(account.role)}
+                </span>
+                <span className={`inline-flex rounded-full px-3.5 py-1 text-xs font-semibold ${statusPill(account.status)}`}>
+                  {displayStatus(account.status)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {account.bio?.trim() && (
+          <section className="mb-8 rounded-3xl border border-stone-200/80 bg-white p-6 shadow-[0_4px_24px_rgba(0,0,0,0.05)] sm:p-8">
+            <h2 className="mb-3 font-['Cormorant_Garamond',serif] text-lg font-semibold text-stone-900">Giới thiệu</h2>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-stone-800">{account.bio.trim()}</p>
+          </section>
+        )}
+
+        <section className="mb-8">
+          <h2 className="mb-4 font-['Cormorant_Garamond',serif] text-lg font-semibold text-stone-900">
+            Thông tin liên hệ
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <InfoTile label="Email">{account.email}</InfoTile>
+            <InfoTile label="Điện thoại" accent="sky">
+              {account.phone?.trim() ? account.phone : '—'}
+            </InfoTile>
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="mb-4 font-['Cormorant_Garamond',serif] text-lg font-semibold text-stone-900">
+            Xác minh và lịch sử
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <InfoTile label="Email đã xác minh" accent="stone">
+              {yesNo(account.emailVerified)}
+            </InfoTile>
+            <InfoTile label="Số điện thoại đã xác minh" accent="stone">
+              {yesNo(account.phoneVerified)}
+            </InfoTile>
+            <InfoTile label="Ngày tạo">{formatDate(account.createdAt)}</InfoTile>
+            <InfoTile label="Đăng nhập gần nhất" accent="sky">
+              {formatDate(account.lastLoginAt)}
+            </InfoTile>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-stone-200/80 bg-white p-6 shadow-[0_4px_24px_rgba(0,0,0,0.05)] sm:p-8">
+          <h2 className="mb-5 font-['Cormorant_Garamond',serif] text-lg font-semibold text-stone-900">Thao tác</h2>
+          <div className="flex flex-wrap gap-3">
+            {account.status?.toLowerCase() === 'active' ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void patchStatus('suspended')}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-800 shadow-sm transition-colors hover:bg-rose-100 disabled:opacity-50"
+              >
+                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                  />
+                </svg>
+                Đình chỉ tài khoản
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void patchStatus('active')}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-emerald-900 shadow-sm transition-colors hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Kích hoạt lại
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
+  )
 }

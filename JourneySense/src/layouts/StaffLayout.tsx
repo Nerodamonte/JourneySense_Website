@@ -10,7 +10,7 @@ const staffNavItems: {
 }[] = [
   {
     to: "/staff",
-    label: "Staff Dashboard",
+    label: "Bảng điều khiển",
     end: true,
     icon: (
       <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,7 +20,7 @@ const staffNavItems: {
   },
   {
     to: "/staff/feedback",
-    label: "Ratings & Feedback",
+    label: "Đánh giá & phản hồi",
     end: true,
     icon: (
       <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -29,29 +29,11 @@ const staffNavItems: {
     ),
   },
   {
-    to: "/staff/feedback/1",
-    label: "Feedback detail",
-    icon: (
-      <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
-  },
-  {
     to: "/staff/journeys/new",
-    label: "Create Journey",
+    label: "Tạo trải nghiệm",
     icon: (
       <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 4v16m8-8H4" />
-      </svg>
-    ),
-  },
-  {
-    to: "/staff/journeys/1/edit",
-    label: "Edit Journey",
-    icon: (
-      <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.172l8.586-8.586z" />
       </svg>
     ),
   },
@@ -77,7 +59,7 @@ export default function StaffLayout() {
         </div>
 
         <p className={`px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-stone-400 ${sidebarCollapsed ? "sr-only" : ""}`}>
-          Staff
+          Nhân viên
         </p>
 
         <nav className="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
@@ -103,7 +85,7 @@ export default function StaffLayout() {
           ))}
         </nav>
 
-        <div className="p-2 border-t border-stone-100">
+        <div className="p-2 border-t border-stone-100 space-y-1">
           <button
             type="button"
             onClick={() => setSidebarCollapsed((c) => !c)}
@@ -124,7 +106,7 @@ export default function StaffLayout() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet context={{ sidebarCollapsed, setSidebarCollapsed } satisfies StaffOutletContext} />
       </div>
     </div>

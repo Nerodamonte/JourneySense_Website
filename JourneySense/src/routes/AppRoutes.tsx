@@ -1,0 +1,67 @@
+import { Navigate, Route, Routes } from 'react-router-dom'
+import AdminLayout from '../layouts/AdminLayout'
+import StaffLayout from '../layouts/StaffLayout'
+import AccountManagementPage from '../pages/admin/AccountManagementPage'
+import AdminAuditPage from '../pages/admin/AdminAuditPage'
+import AdminDashboardPage from '../pages/admin/AdminDashboardPage'
+import AdminPlaceDetailPage from '../pages/admin/AdminPlaceDetailPage'
+import AdminPlacesPage from '../pages/admin/AdminPlacesPage'
+import UserAccountDetailPage from '../pages/admin/UserAccountDetailPage'
+import LoginPage from '../pages/LoginPage'
+import StaffCreateJourneyPage from '../pages/staff/StaffCreateJourneyPage'
+import StaffDashboardPage from '../pages/staff/StaffDashboardPage'
+import StaffEditJourneyPage from '../pages/staff/StaffEditJourneyPage'
+import StaffExperienceDetailPage from '../pages/staff/StaffExperienceDetailPage'
+import StaffFeedbackDetailPage from '../pages/staff/StaffFeedbackDetailPage'
+import StaffFeedbackPage from '../pages/staff/StaffFeedbackPage'
+import StaffJourneyFeedbackDetailPage from '../pages/staff/StaffJourneyFeedbackDetailPage'
+import PortalProfilePage from '../pages/portal/PortalProfilePage'
+import HomeRedirect from './HomeRedirect'
+import ProtectedRoute from './ProtectedRoute'
+
+export default function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<HomeRedirect />} />
+
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/admin/dashboard" replace />} />
+        <Route path="dashboard" element={<AdminDashboardPage />} />
+        <Route path="places" element={<AdminPlacesPage />} />
+        <Route path="places/:placeId" element={<AdminPlaceDetailPage />} />
+        <Route path="accounts" element={<AccountManagementPage />} />
+        <Route path="accounts/:userId" element={<UserAccountDetailPage />} />
+        <Route path="audit" element={<AdminAuditPage />} />
+        <Route path="profile" element={<PortalProfilePage />} />
+      </Route>
+
+      <Route
+        path="/staff"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'staff']}>
+            <StaffLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<StaffDashboardPage />} />
+        <Route path="feedback" element={<StaffFeedbackPage />} />
+        <Route path="feedback/journey/:journeyId" element={<StaffJourneyFeedbackDetailPage />} />
+        <Route path="feedback/:feedbackId" element={<StaffFeedbackDetailPage />} />
+        <Route path="journeys/new" element={<StaffCreateJourneyPage />} />
+        <Route path="journeys/:journeyId/edit" element={<StaffEditJourneyPage />} />
+        <Route path="journeys/:journeyId" element={<StaffExperienceDetailPage />} />
+        <Route path="profile" element={<PortalProfilePage />} />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
