@@ -1,7 +1,9 @@
 import axios from 'axios'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { toast } from 'sonner'
+import goongjs from '@goongmaps/goong-js'
+import '@goongmaps/goong-js/dist/goong-js.css'
 import {
   ExperienceFormSectionHeader,
   experienceFieldLabel as labelCls,
@@ -25,21 +27,199 @@ function buildTagsPayload(enumTags: string[], tagsExtraLine: string): string[] |
 
 type PhotoDraftRow = ExperiencePhotoInput & { key: string }
 
+type ProvinceRow = { code: number; name: string }
+type DistrictRow = { code: number; name: string }
+type WardRow = { code: number; name: string }
+
+type ProvinceDetailV2 = {
+  code: number
+  name: string
+  districts?: Array<{ code: number; name: string; wards?: WardRow[] | null }>
+}
+
+type ProvinceDetailV1 = {
+  code: number
+  name: string
+  districts?: Array<{ code: number; name: string; wards?: WardRow[] | null }>
+}
+
+type DistrictDetailV1 = {
+  code: number
+  name: string
+  wards?: WardRow[] | null
+}
+
+type PlaceSuggestion = {
+  description: string
+  placeId: string
+  mainText?: string | null
+  secondaryText?: string | null
+  plusCode?: string | null
+}
+
+type PlaceDetail = {
+  placeId: string
+  name?: string | null
+  formattedAddress?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+type CoordinateMode = 'manual' | 'goong'
+
+type LngLat = [number, number]
+
+type GoongMapInstance = {
+  setCenter: (center: LngLat) => void
+  remove: () => void
+}
+
+type GoongMarkerInstance = {
+  setLngLat: (pos: LngLat) => GoongMarkerInstance
+  addTo: (map: GoongMapInstance) => GoongMarkerInstance
+}
+
+type GoongSdk = {
+  accessToken: string
+  Map: new (opts: { container: HTMLElement; style: string; center: LngLat; zoom: number }) => GoongMapInstance
+  Marker: new () => GoongMarkerInstance
+}
+
+const COUNTRY_LOCKED = 'Vietnam'
+
+function normalizeVi(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+}
+
+function normalizeAdminName(s: string): string {
+  return normalizeVi(s)
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\b0+(\d)\b/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function adminNameVariants(s: string): string[] {
+  const base = normalizeAdminName(s)
+  const stripped = base.replace(/^(tinh|thanh pho|tp|quan|q|huyen|h|thi xa|tx|phuong|p|xa|thi tran)\s+/, '')
+  return Array.from(new Set([base, stripped].filter(Boolean)))
+}
+
+function findBestNameMatch<T extends { name: string }>(target: string, list: T[]): T | null {
+  const tv = adminNameVariants(target)
+  if (!tv.length) return null
+
+  for (const item of list) {
+    const iv = adminNameVariants(item.name)
+    if (tv.some((t) => iv.includes(t))) return item
+  }
+
+  for (const item of list) {
+    const itemNorm = normalizeAdminName(item.name)
+    if (tv.some((t) => itemNorm.includes(t) || t.includes(itemNorm))) return item
+  }
+
+  return null
+}
+
+function parseAdminFromFormattedAddress(formattedAddress: string): {
+  streetAddress: string
+  wardName: string
+  districtName: string
+  provinceName: string
+} {
+  const rawParts = formattedAddress
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+
+  const parts = [...rawParts]
+  while (parts.length) {
+    const last = parts[parts.length - 1]
+    const lastNorm = normalizeVi(last)
+    if (lastNorm === 'vietnam' || lastNorm === 'viet nam') {
+      parts.pop()
+      continue
+    }
+    if (/^\d{4,6}$/.test(lastNorm)) {
+      parts.pop()
+      continue
+    }
+    break
+  }
+
+  const provinceName = parts.pop() ?? ''
+  const districtName = parts.pop() ?? ''
+  const wardName = parts.pop() ?? ''
+  const streetAddress = parts.join(', ').trim()
+  return { streetAddress, wardName, districtName, provinceName }
+}
+
+function inferCityFromFormattedAddress(formattedAddress: string): string {
+  const parts = formattedAddress
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (!parts.length) return ''
+  const last = parts[parts.length - 1]
+  const lastNorm = normalizeVi(last)
+  if (lastNorm === 'vietnam' || lastNorm === 'viet nam') {
+    return parts.length >= 2 ? parts[parts.length - 2] : ''
+  }
+  return last
+}
+
+type PendingAdminSelection = {
+  provinceName: string
+  districtName: string
+  wardName: string
+  appliedProvince: boolean
+  appliedDistrict: boolean
+  appliedWard: boolean
+}
+
 export default function StaffCreateJourneyPage() {
   const { setSidebarCollapsed } = useOutletContext<StaffOutletContext>()
   const navigate = useNavigate()
   const base = import.meta.env.VITE_API_BASE_URL ?? ''
+  const goongMapKey = import.meta.env.VITE_GOONG_MAP_KEY
 
   const [categories, setCategories] = useState<CategoryResponseDto[]>([])
   const [name, setName] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [address, setAddress] = useState('')
   const [city, setCity] = useState('')
-  const [country, setCountry] = useState('Vietnam')
   /** Cặp WGS84 hoặc bỏ trống cả hai → geocode (MICRO_EXPERIENCE_FE.md §3). */
   const [latitudeStr, setLatitudeStr] = useState('')
   const [longitudeStr, setLongitudeStr] = useState('')
   const [richDescription, setRichDescription] = useState('')
+
+  // Province Open API (Vietnam)
+  const [provinces, setProvinces] = useState<ProvinceRow[]>([])
+  const [provinceCode, setProvinceCode] = useState('')
+  const [districts, setDistricts] = useState<DistrictRow[]>([])
+  const [districtCode, setDistrictCode] = useState('')
+  const [wards, setWards] = useState<WardRow[]>([])
+  const [wardCode, setWardCode] = useState('')
+  const [wardsByDistrictCode, setWardsByDistrictCode] = useState<Record<number, WardRow[]>>({})
+
+  const [pendingAdmin, setPendingAdmin] = useState<PendingAdminSelection | null>(null)
+
+  // Coordinate / Place search
+  const [coordinateMode, setCoordinateMode] = useState<CoordinateMode>('manual')
+  const [placeQuery, setPlaceQuery] = useState('')
+  const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([])
+  const [placeLoading, setPlaceLoading] = useState(false)
+  const [selectedPlace, setSelectedPlace] = useState<PlaceDetail | null>(null)
+
+  const mapContainerRef = useRef<HTMLDivElement | null>(null)
+  const goongMapRef = useRef<GoongMapInstance | null>(null)
+  const goongMarkerRef = useRef<GoongMarkerInstance | null>(null)
 
   const [accessibleBy, setAccessibleBy] = useState<string[]>(['walking', 'motorbike'])
   const [preferredTimes, setPreferredTimes] = useState<string[]>([])
@@ -68,6 +248,290 @@ export default function StaffCreateJourneyPage() {
     })()
   }, [base])
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { data } = await axios.get<ProvinceRow[]>('https://provinces.open-api.vn/api/v2/p/')
+        setProvinces(Array.isArray(data) ? data : [])
+      } catch (e) {
+        toast.error(getApiErrorMessage(e, 'Không tải được danh sách tỉnh/thành.'))
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!provinceCode) {
+      setDistricts([])
+      setDistrictCode('')
+      setWards([])
+      setWardCode('')
+      setWardsByDistrictCode({})
+      return
+    }
+
+    void (async () => {
+      try {
+        const v2Url = `https://provinces.open-api.vn/api/v2/p/${encodeURIComponent(provinceCode)}?depth=2`
+        const v1Url = `https://provinces.open-api.vn/api/p/${encodeURIComponent(provinceCode)}?depth=2`
+
+        const { data: v2 } = await axios.get<ProvinceDetailV2>(v2Url)
+        const v2HasDistricts = Array.isArray(v2?.districts) && v2.districts.length > 0
+        const data = v2HasDistricts ? v2 : (await axios.get<ProvinceDetailV1>(v1Url)).data
+
+        const dList = Array.isArray(data?.districts) ? data.districts.map((d) => ({ code: d.code, name: d.name })) : []
+        setWardsByDistrictCode({})
+        setDistricts(dList)
+        setDistrictCode('')
+        setWards([])
+        setWardCode('')
+      } catch (e) {
+        toast.error(getApiErrorMessage(e, 'Không tải được quận/huyện.'))
+      }
+    })()
+  }, [provinceCode])
+
+  useEffect(() => {
+    if (!districtCode) {
+      setWards([])
+      setWardCode('')
+      return
+    }
+
+    const codeNum = Number(districtCode)
+    if (!Number.isFinite(codeNum)) {
+      setWards([])
+      setWardCode('')
+      return
+    }
+
+    const cached = wardsByDistrictCode[codeNum]
+    if (Array.isArray(cached) && cached.length > 0) {
+      setWards(cached)
+      setWardCode('')
+      return
+    }
+
+    const ctrl = new AbortController()
+    void (async () => {
+      try {
+        const { data } = await axios.get<DistrictDetailV1>(
+          `https://provinces.open-api.vn/api/d/${encodeURIComponent(String(codeNum))}?depth=2`,
+          { signal: ctrl.signal },
+        )
+        const next = Array.isArray(data?.wards) ? (data.wards as WardRow[]) : []
+        setWards(next)
+        setWardCode('')
+        setWardsByDistrictCode((prev) => ({ ...prev, [codeNum]: next }))
+      } catch (e) {
+        if (axios.isCancel(e)) return
+        setWards([])
+        setWardCode('')
+        toast.error(getApiErrorMessage(e, 'Không tải được phường/xã.'))
+      }
+    })()
+
+    return () => {
+      ctrl.abort()
+    }
+  }, [districtCode, wardsByDistrictCode])
+
+  const selectedDistrictName = useMemo(() => {
+    if (!districtCode) return ''
+    const codeNum = Number(districtCode)
+    const found = districts.find((d) => d.code === codeNum)
+    return found?.name ?? ''
+  }, [districtCode, districts])
+
+  const selectedWardName = useMemo(() => {
+    if (!wardCode) return ''
+    const codeNum = Number(wardCode)
+    const found = wards.find((w) => w.code === codeNum)
+    return found?.name ?? ''
+  }, [wardCode, wards])
+
+  useEffect(() => {
+    if (!city.trim() || provinces.length === 0) return
+
+    if (pendingAdmin) return
+    const matched = findBestNameMatch(city, provinces)
+    if (matched && String(matched.code) !== provinceCode) setProvinceCode(String(matched.code))
+  }, [city, provinces, provinceCode, pendingAdmin])
+
+  useEffect(() => {
+    if (coordinateMode !== 'goong') return
+    const q = placeQuery.trim()
+    if (q.length < 2) {
+      setPlaceSuggestions([])
+      return
+    }
+
+    const ctrl = new AbortController()
+    const t = window.setTimeout(() => {
+      void (async () => {
+        setPlaceLoading(true)
+        try {
+          const { data } = await api.get<PlaceSuggestion[] | unknown>('/api/goong/place-suggestions', {
+            params: { input: q, limit: 8 },
+            signal: ctrl.signal,
+          })
+          setPlaceSuggestions(Array.isArray(data) ? (data as PlaceSuggestion[]) : [])
+        } catch (e) {
+          if (axios.isCancel(e)) return
+          setPlaceSuggestions([])
+        } finally {
+          setPlaceLoading(false)
+        }
+      })()
+    }, 350)
+
+    return () => {
+      ctrl.abort()
+      window.clearTimeout(t)
+    }
+  }, [coordinateMode, placeQuery])
+
+  const selectPlace = async (s: PlaceSuggestion) => {
+    setPlaceQuery(s.description)
+    setPlaceSuggestions([])
+    setPlaceLoading(true)
+    try {
+      const { data } = await api.get<PlaceDetail>('/api/goong/place-detail', {
+        params: { placeId: s.placeId },
+      })
+      setSelectedPlace(data)
+      const addr = data.formattedAddress?.trim() || s.description
+      const parsedAdmin = addr ? parseAdminFromFormattedAddress(addr) : null
+      setAddress(parsedAdmin?.streetAddress || addr)
+      const inferredCity = addr ? inferCityFromFormattedAddress(addr) : ''
+      if (inferredCity) setCity(inferredCity)
+
+      if (parsedAdmin) {
+        setPendingAdmin({
+          provinceName: parsedAdmin.provinceName,
+          districtName: parsedAdmin.districtName,
+          wardName: parsedAdmin.wardName,
+          appliedProvince: false,
+          appliedDistrict: false,
+          appliedWard: false,
+        })
+      } else {
+        setPendingAdmin(null)
+      }
+
+      if (data.latitude != null && data.longitude != null) {
+        setLatitudeStr(String(data.latitude))
+        setLongitudeStr(String(data.longitude))
+      }
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Không lấy được chi tiết địa điểm từ Goong.'))
+    } finally {
+      setPlaceLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingAdmin) return
+    if (pendingAdmin.appliedProvince) return
+    if (!pendingAdmin.provinceName || provinces.length === 0) return
+
+    const matched = findBestNameMatch(pendingAdmin.provinceName, provinces)
+    if (matched) {
+      const codeStr = String(matched.code)
+      if (codeStr !== provinceCode) setProvinceCode(codeStr)
+      setCity(matched.name)
+    }
+
+    setPendingAdmin((p) => (p ? { ...p, appliedProvince: true } : p))
+  }, [pendingAdmin, provinces, provinceCode])
+
+  useEffect(() => {
+    if (!pendingAdmin) return
+    if (!pendingAdmin.appliedProvince || pendingAdmin.appliedDistrict) return
+    if (!pendingAdmin.districtName) {
+      setPendingAdmin((p) => (p ? { ...p, appliedDistrict: true } : p))
+      return
+    }
+    if (!provinceCode || districts.length === 0) return
+
+    const matched = findBestNameMatch(pendingAdmin.districtName, districts)
+    if (matched) {
+      const codeStr = String(matched.code)
+      if (codeStr !== districtCode) setDistrictCode(codeStr)
+    }
+
+    setPendingAdmin((p) => (p ? { ...p, appliedDistrict: true } : p))
+  }, [pendingAdmin, provinceCode, districts, districtCode])
+
+  useEffect(() => {
+    if (!pendingAdmin) return
+    if (!pendingAdmin.appliedDistrict || pendingAdmin.appliedWard) return
+    if (!pendingAdmin.wardName) {
+      setPendingAdmin((p) => (p ? { ...p, appliedWard: true } : p))
+      return
+    }
+    if (!districtCode || wards.length === 0) return
+
+    const matched = findBestNameMatch(pendingAdmin.wardName, wards)
+    if (matched) {
+      const codeStr = String(matched.code)
+      if (codeStr !== wardCode) setWardCode(codeStr)
+    }
+
+    setPendingAdmin((p) => (p ? { ...p, appliedWard: true } : p))
+  }, [pendingAdmin, districtCode, wards, wardCode])
+
+  useEffect(() => {
+    if (!pendingAdmin) return
+    if (pendingAdmin.appliedProvince && pendingAdmin.appliedDistrict && pendingAdmin.appliedWard) {
+      setPendingAdmin(null)
+    }
+  }, [pendingAdmin])
+
+  useEffect(() => {
+    if (coordinateMode !== 'goong') setPendingAdmin(null)
+  }, [coordinateMode])
+
+  useEffect(() => {
+    if (coordinateMode !== 'goong') return
+    if (!goongMapKey) return
+    if (!mapContainerRef.current) return
+
+    const lat = Number(latitudeStr)
+    const lng = Number(longitudeStr)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+    const sdk = goongjs as unknown as GoongSdk
+
+    if (!goongMapRef.current) {
+      sdk.accessToken = goongMapKey
+      goongMapRef.current = new sdk.Map({
+        container: mapContainerRef.current,
+        style: `https://tiles.goong.io/assets/goong_map_web.json?api_key=${encodeURIComponent(goongMapKey)}`,
+        center: [lng, lat],
+        zoom: 15,
+      })
+      goongMarkerRef.current = new sdk.Marker().setLngLat([lng, lat]).addTo(goongMapRef.current)
+      return
+    }
+
+    goongMapRef.current.setCenter([lng, lat])
+    if (goongMarkerRef.current) goongMarkerRef.current.setLngLat([lng, lat])
+  }, [coordinateMode, goongMapKey, latitudeStr, longitudeStr])
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (goongMapRef.current) {
+          goongMapRef.current.remove()
+          goongMapRef.current = null
+          goongMarkerRef.current = null
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [])
+
   const submit = async () => {
     if (!categoryId || !name.trim()) {
       toast.warning('Vui lòng nhập tên và chọn danh mục.')
@@ -95,13 +559,15 @@ export default function StaffCreateJourneyPage() {
 
     setBusy(true)
     const t = toast.loading('Đang tạo trải nghiệm…')
+
+    const addressPayload = [address.trim(), selectedWardName, selectedDistrictName].filter(Boolean).join(', ') || undefined
     try {
       const { data, status, headers } = await api.post('/api/micro-experiences', {
         name: name.trim(),
         categoryId,
-        address: address.trim() || undefined,
+        address: addressPayload,
         city: city.trim() || undefined,
-        country: country.trim() || undefined,
+        country: COUNTRY_LOCKED,
         ...(coord.kind === 'fixed'
           ? { latitude: coord.latitude, longitude: coord.longitude }
           : {}),
@@ -226,38 +692,184 @@ export default function StaffCreateJourneyPage() {
               <div className="flex min-h-0 min-w-0 flex-col gap-5 lg:min-h-[280px]">
                 <div className={formGridGap}>
                   <div>
-                    <label className={labelCls}>Thành phố</label>
-                    <input value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} placeholder="Thành phố" />
+                    <label className={labelCls}>Tỉnh / thành phố</label>
+                    <select
+                      value={provinceCode}
+                      onChange={(e) => {
+                        const code = e.target.value
+                        setProvinceCode(code)
+                        const codeNum = Number(code)
+                        const p = provinces.find((x) => x.code === codeNum)
+                        setCity(p?.name ?? '')
+                      }}
+                      className={selectCls}
+                    >
+                      <option value="">-- Chọn tỉnh/thành --</option>
+                      {provinces.map((p) => (
+                        <option key={p.code} value={String(p.code)}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className={labelCls}>Quốc gia</label>
-                    <input value={country} onChange={(e) => setCountry(e.target.value)} className={inputCls} placeholder="Quốc gia" />
+                    <input value={COUNTRY_LOCKED} readOnly className={inputCls} placeholder="Quốc gia" />
+                  </div>
+                </div>
+                <div className={formGridGap}>
+                  <div>
+                    <label className={labelCls}>Quận / huyện</label>
+                    <select
+                      value={districtCode}
+                      onChange={(e) => setDistrictCode(e.target.value)}
+                      className={selectCls}
+                      disabled={!provinceCode}
+                    >
+                      <option value="">-- Chọn quận/huyện --</option>
+                      {districts.map((d) => (
+                        <option key={d.code} value={String(d.code)}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Phường / xã</label>
+                    <select
+                      value={wardCode}
+                      onChange={(e) => setWardCode(e.target.value)}
+                      className={selectCls}
+                      disabled={!districtCode}
+                    >
+                      <option value="">-- Chọn phường/xã --</option>
+                      {wards.map((w) => (
+                        <option key={w.code} value={String(w.code)}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col rounded-2xl border border-dashed border-amber-200/90 bg-amber-50/50 p-4 sm:p-5">
-                  <p className="text-xs font-semibold text-amber-900">Tọa độ WGS84 (tuỳ chọn)</p>
-                  <div className={`mt-3 ${formGridGap}`}>
-                    <div>
-                      <label className={labelCls}>Vĩ độ (latitude)</label>
-                      <input
-                        value={latitudeStr}
-                        onChange={(e) => setLatitudeStr(e.target.value)}
-                        className={inputCls}
-                        placeholder="Ví dụ: 10.7769"
-                        inputMode="decimal"
-                      />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Kinh độ (longitude)</label>
-                      <input
-                        value={longitudeStr}
-                        onChange={(e) => setLongitudeStr(e.target.value)}
-                        className={inputCls}
-                        placeholder="Ví dụ: 106.7009"
-                        inputMode="decimal"
-                      />
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs font-semibold text-amber-900">Tọa độ / tìm địa điểm (tuỳ chọn)</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCoordinateMode('manual')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                          coordinateMode === 'manual'
+                            ? 'bg-white border-amber-300 text-amber-900 ring-2 ring-amber-400/20'
+                            : 'bg-white/70 border-stone-200 text-stone-600 hover:bg-white'
+                        }`}
+                      >
+                        Nhập tay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCoordinateMode('goong')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                          coordinateMode === 'goong'
+                            ? 'bg-white border-amber-300 text-amber-900 ring-2 ring-amber-400/20'
+                            : 'bg-white/70 border-stone-200 text-stone-600 hover:bg-white'
+                        }`}
+                      >
+                        Tìm trên Goong
+                      </button>
                     </div>
                   </div>
+
+                  {coordinateMode === 'manual' && (
+                    <div className={`mt-3 ${formGridGap}`}>
+                      <div>
+                        <label className={labelCls}>Vĩ độ (latitude)</label>
+                        <input
+                          value={latitudeStr}
+                          onChange={(e) => setLatitudeStr(e.target.value)}
+                          className={inputCls}
+                          placeholder="Ví dụ: 10.7769"
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Kinh độ (longitude)</label>
+                        <input
+                          value={longitudeStr}
+                          onChange={(e) => setLongitudeStr(e.target.value)}
+                          className={inputCls}
+                          placeholder="Ví dụ: 106.7009"
+                          inputMode="decimal"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {coordinateMode === 'goong' && (
+                    <div className="mt-3 space-y-3">
+                      <div className="relative">
+                        <label className={labelCls}>Tìm địa điểm (Goong)</label>
+                        <input
+                          value={placeQuery}
+                          onChange={(e) => {
+                            setPlaceQuery(e.target.value)
+                            setSelectedPlace(null)
+                          }}
+                          className={inputCls}
+                          placeholder="Nhập tên quán, địa chỉ…"
+                        />
+                        {placeLoading && (
+                          <div className="absolute right-3 top-9 text-[11px] font-semibold text-stone-500">Đang tìm…</div>
+                        )}
+                        {placeSuggestions.length > 0 && (
+                          <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-lg">
+                            {placeSuggestions.map((sug) => (
+                              <button
+                                key={sug.placeId}
+                                type="button"
+                                onClick={() => void selectPlace(sug)}
+                                className="w-full text-left px-4 py-3 hover:bg-stone-50"
+                              >
+                                <p className="text-sm font-semibold text-stone-900 truncate">{sug.mainText || sug.description}</p>
+                                <p className="mt-0.5 text-xs text-stone-600 truncate">{sug.secondaryText || sug.description}</p>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className={formGridGap}>
+                        <div>
+                          <label className={labelCls}>Vĩ độ (latitude)</label>
+                          <input value={latitudeStr} readOnly className={`${inputCls} bg-stone-50`} placeholder="—" />
+                        </div>
+                        <div>
+                          <label className={labelCls}>Kinh độ (longitude)</label>
+                          <input value={longitudeStr} readOnly className={`${inputCls} bg-stone-50`} placeholder="—" />
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-stone-200/80 bg-white p-3">
+                        {!goongMapKey && (
+                          <p className="text-xs text-stone-600">
+                            Chưa cấu hình <span className="font-mono">VITE_GOONG_MAP_KEY</span> nên chưa hiển thị bản đồ.
+                          </p>
+                        )}
+                        {goongMapKey && (
+                          <div
+                            ref={mapContainerRef}
+                            className="h-[260px] w-full overflow-hidden rounded-2xl bg-stone-100"
+                            aria-label="Bản đồ Goong"
+                          />
+                        )}
+                        {selectedPlace?.name && (
+                          <p className="mt-2 text-[11px] font-semibold text-stone-600 truncate">
+                            Đã chọn: <span className="text-stone-900">{selectedPlace.name}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
