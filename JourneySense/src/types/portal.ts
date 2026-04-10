@@ -94,6 +94,20 @@ export interface AdminAnalyticsSummaryResponse {
   feedbacksPendingModeration: number
 }
 
+// ——— AdminJourneyDtos.cs ———
+
+export interface AdminJourneyListItemDto {
+  id: string
+  travelerId?: string | null
+  originAddress?: string | null
+  destinationAddress?: string | null
+  vehicleType?: string | null
+  status?: string | null
+  createdAt?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+}
+
 /** AdminController POST `/api/admin/embeddings/generate` — anonymous object trong code. */
 export interface AdminEmbeddingGenerateResponse {
   success: number
@@ -161,7 +175,23 @@ export interface StaffFeedbackDetailDto extends StaffFeedbackListItemDto {
   waypointStopOrder?: number | null
 }
 
-/** GET `/api/journeys/{id}` — phần dùng cho staff xem lưới waypoint (chi tiết feedback). */
+/** GeoPointResponse — dùng cho routePoints (overview map). */
+export interface GeoPointResponse {
+  latitude: number
+  longitude: number
+}
+
+export interface RouteSegmentResponse {
+  segmentId: string
+  segmentOrder?: number | null
+  distanceMeters?: number | null
+  estimatedDurationMinutes?: number | null
+  isScenic?: boolean | null
+  isBusy?: boolean | null
+  isCulturalArea?: boolean | null
+}
+
+/** GET `/api/journeys/{id}` (traveler) và GET `/api/admin/journeys/{id}` (admin). */
 export interface JourneyWaypointVisitFeedbackResponse {
   visitId: string
   feedbackId?: string | null
@@ -174,20 +204,43 @@ export interface JourneyWaypointVisitFeedbackResponse {
 export interface JourneyWaypointResponse {
   waypointId: string
   experienceId: string
+  suggestionId?: string | null
+  segmentId?: string | null
   stopOrder: number
   name?: string | null
   categoryName?: string | null
   address?: string | null
   city?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  coverPhotoUrl?: string | null
+  detourDistanceMeters?: number | null
+  detourTimeMinutes?: number | null
   visitFeedback?: JourneyWaypointVisitFeedbackResponse | null
 }
 
 export interface JourneyDetailResponse {
   id: string
   travelerId?: string | null
+  originAddress?: string | null
+  destinationAddress?: string | null
+  vehicleType?: string | null
+  totalDistanceMeters?: number | null
+  estimatedDurationMinutes?: number | null
+  timeBudgetMinutes?: number | null
+  maxDetourDistanceMeters?: number | null
+  currentMood?: string | null
+  status?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+  createdAt?: string | null
   journeyFeedback?: string | null
   journeyFeedbackModerationStatus?: string | null
+  routePoints?: GeoPointResponse[] | null
+  setupPrimaryRoutePoints?: GeoPointResponse[] | null
+  segments?: RouteSegmentResponse[] | null
   waypoints?: JourneyWaypointResponse[] | null
+  selectedSegmentId?: string | null
 }
 
 /** StaffFeedbacksController POST moderate */

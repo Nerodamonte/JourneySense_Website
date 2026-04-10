@@ -14,6 +14,26 @@ const nav: { to: string; label: string; icon: ReactNode }[] = [
     ),
   },
   {
+    to: '/admin/journeys',
+    label: 'Hành trình',
+    icon: (
+      <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.75}
+          d="M6 19a2 2 0 100-4 2 2 0 000 4zm12-10a2 2 0 100-4 2 2 0 000 4z"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.75}
+          d="M8 17h5a5 5 0 005-5V7"
+        />
+      </svg>
+    ),
+  },
+  {
     to: '/admin/places',
     label: 'Địa điểm',
     icon: (
